@@ -25,7 +25,7 @@ type UserRepository interface {
 	Delete(ctx context.Context, id uint) error
 
 	// ListByShop retrieves all users associated with a specific shop ID.
-	// (Will typically return ShopOwners and Employees).
+	// (Will typically return ShopManagers and Employees).
 	ListByShop(ctx context.Context, shopID uint) ([]*User, error)
 
 	// ListByRole retrieves all users with a specific role.

@@ -10,8 +10,8 @@ const (
 	RoleUndefined Role = iota // 0
 	// RoleAdmin represents an application administrator.
 	RoleAdmin // 1
-	// RoleShopOwner represents a user who owns and manages a shop.
-	RoleShopOwner // 2
+	// RoleShopManager represents a user who owns and manages a shop.
+	RoleShopManager // 2
 	// RoleEmployee represents a user employed at a shop.
 	RoleEmployee // 3
 	// RoleCustomer represents a standard customer who can place orders.
@@ -23,8 +23,8 @@ func (r Role) String() string {
 	switch r {
 	case RoleAdmin:
 		return "Admin"
-	case RoleShopOwner:
-		return "ShopOwner"
+	case RoleShopManager:
+		return "ShopManager"
 	case RoleEmployee:
 		return "Employee"
 	case RoleCustomer:
@@ -37,7 +37,7 @@ func (r Role) String() string {
 // IsValidRole checks if the role is a defined, valid role.
 func (r Role) IsValidRole() bool {
 	switch r {
-	case RoleAdmin, RoleShopOwner, RoleEmployee, RoleCustomer:
+	case RoleAdmin, RoleShopManager, RoleEmployee, RoleCustomer:
 		return true
 	default:
 		return false
@@ -49,8 +49,8 @@ func ParseRole(s string) (Role, error) {
 	switch s {
 	case "Admin":
 		return RoleAdmin, nil
-	case "ShopOwner":
-		return RoleShopOwner, nil
+	case "ShopManager":
+		return RoleShopManager, nil
 	case "Employee":
 		return RoleEmployee, nil
 	case "Customer":

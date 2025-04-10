@@ -74,7 +74,7 @@ func NewUser(name, email, plainPassword string, role Role, shopID *uint) (*User,
 		if shopID != nil {
 			return nil, ErrCustomerHasShopID
 		}
-	case RoleShopOwner, RoleEmployee:
+	case RoleShopManager, RoleEmployee:
 		if shopID == nil {
 			// Consider if 0 is a valid shop ID if not using pointers
 			return nil, ErrMissingShopID
@@ -140,12 +140,12 @@ func (u *User) Activate() {
 
 // CanManageEmployees checks if the user role allows managing employees.
 func (u *User) CanManageEmployees() bool {
-	return u.Role == RoleShopOwner
+	return u.Role == RoleShopManager
 }
 
 // CanManageInventories checks if the user role allows managing inventories.
 func (u *User) CanManageInventories() bool {
-	return u.Role == RoleShopOwner || u.Role == RoleEmployee
+	return u.Role == RoleShopManager || u.Role == RoleEmployee
 }
 
 // CanPlaceOrders checks if the user role allows placing orders.
