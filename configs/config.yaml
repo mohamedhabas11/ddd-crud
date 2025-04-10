@@ -1,0 +1,31 @@
+# Example Configuration
+
+# Application Info
+app:
+  name: "DDD-CRUD App"
+
+# Server configuration
+server:
+  port: ":8080"
+  body_limit_mb: 4
+  read_timeout_sec: 15
+  write_timeout_sec: 15
+
+# --- JWT Configuration ---
+jwt:
+  secret: "your-very-secret-key-change-me" # CHANGE THIS! Use a strong, random secret. Load from ENV VAR in production.
+  expiry_minutes: 60 # Token validity duration
+
+# Database configuration
+database:
+  # ... (keep existing DB config) ...
+  driver: "postgres" # Or "mysql"
+  dsn: "host=db-postgres user=user password=password dbname=ddd_crud port=5432 sslmode=disable TimeZone=UTC" # Or MySQL DSN
+  max_idle_conns: 10
+  max_open_conns: 50
+  conn_max_lifetime_minutes: 60
+  log_level: "info"
+
+# Logger configuration
+logger:
+  level: "info"
