@@ -28,8 +28,8 @@ var (
 
 // UserService provides application logic for user operations.
 type UserService struct {
-	userRepo   user.UserRepository
-	userLogger *log.Logger // TODO: Replace with a structured logger interface
+	userRepo   user.UserRepository // This field holds the injected gormUserRepository instance
+	userLogger *log.Logger         // TODO: Replace with a structured logger interface
 }
 
 // NewUserService creates a new UserService instance.
@@ -92,6 +92,12 @@ func (s *UserService) CreateUser(ctx context.Context, name, email, plainPassword
 
 	// 5. Persist the user using the repository
 	s.userLogger.Printf("INFO: Persisting new user with email: %s, Role: %s", email, userRole.String())
+	// =====================================================
+	// >>>>>>>>>>>> THE GORM .CREATE CALL HAPPENS RIGHT HERE <<<<<<<<<<<<
+	// =====================================================
+	// 's.userRepo' holds the gormUserRepository instance injected in main.go.
+	// Go calls the Create method implemented by gormUserRepository because
+	// that's the concrete type satisfying the user.UserRepository interface.
 	err = s.userRepo.Create(ctx, newUser)
 	if err != nil {
 		s.userLogger.Printf("ERROR: Failed to save user '%s' to repository: %v", email, err)
