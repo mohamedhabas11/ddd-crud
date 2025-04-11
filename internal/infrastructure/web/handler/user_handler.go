@@ -5,36 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
-	"github.com/gofiber/fiber/v2" // Import fiber
+	"github.com/gofiber/fiber/v2"
 	app_service "github.com/mohamedhabas11/ddd-crud/internal/application/service"
-	"github.com/mohamedhabas11/ddd-crud/internal/domain/user"             // Import user for Role
-	"github.com/mohamedhabas11/ddd-crud/internal/infrastructure/security" // Import security for Claims
+	"github.com/mohamedhabas11/ddd-crud/internal/domain/user"
+	"github.com/mohamedhabas11/ddd-crud/internal/infrastructure/security"
 	"github.com/mohamedhabas11/ddd-crud/internal/infrastructure/web/dto"
 )
 
-// --- Context Keys (Now primarily for Locals, but keep definitions) ---
+// --- Context Keys ---
 type contextKey string
 
 const (
-	ContextKeyAuthClaims   contextKey = "authClaims"   // Key for JWT claims object in Locals
-	ContextKeyTargetUserID contextKey = "targetUserID" // Key for the user ID from the URL path in Locals
+	ContextKeyAuthClaims   contextKey = "authClaims"
+	ContextKeyTargetUserID contextKey = "targetUserID"
 )
 
 // UserHandler handles HTTP requests related to users.
 type UserHandler struct {
 	userService *app_service.UserService
 	jwtService  *security.JWTService
-	logger      *log.Logger
+	logger      *slog.Logger // <--- CHANGE THIS FIELD TYPE
 }
 
 // NewUserHandler creates a new UserHandler.
+// CHANGE the logger parameter type here:
 func NewUserHandler(
 	userService *app_service.UserService,
 	jwtService *security.JWTService,
-	logger *log.Logger,
+	logger *slog.Logger,
 ) *UserHandler {
 	if userService == nil {
 		panic("userService is required for UserHandler")
@@ -43,63 +44,39 @@ func NewUserHandler(
 		panic("jwtService is required for UserHandler")
 	}
 	if logger == nil {
-		logger = log.Default()
-		logger.Println("WARN: No logger provided to UserHandler, using default log package.")
+		logger = slog.Default() // Use slog default
+		logger.Warn("No logger provided to UserHandler, using default slog logger.")
 	}
 	return &UserHandler{
 		userService: userService,
 		jwtService:  jwtService,
-		logger:      logger,
+		logger:      logger, // Assign slog logger
 	}
 }
 
-// --- Helper Functions (Original for http.HandlerFunc) ---
-func decodeJSONBody(r *http.Request, v interface{}) error {
-	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(v)
-	if err != nil {
-		return fmt.Errorf("failed to decode request body: %w", err)
-	}
-	return nil
-}
+// --- Helper Functions (Fiber versions - Updated for slog) ---
 
-func respondWithError(w http.ResponseWriter, logger *log.Logger, message string, code int, err error) {
+// RespondWithErrorFiber logs the error using slog and sends a JSON error response.
+func RespondWithErrorFiber(c *fiber.Ctx, logger *slog.Logger, message string, code int, err error) error {
+	logArgs := []any{"status_code", code, "message", message, "path", c.Path()}
 	if err != nil {
-		logger.Printf("ERROR: HTTP %d - %s: %v", code, message, err)
+		logArgs = append(logArgs, "error", err)
+		// Log with Error level if an actual error occurred
+		logger.Error("HTTP Response Error", logArgs...)
 	} else {
-		logger.Printf("WARN: HTTP %d - %s", code, message)
+		// Log with Warn level for client errors without a Go error object (e.g., bad request format)
+		logger.Warn("HTTP Response Error", logArgs...)
 	}
-	errorResponse := map[string]string{"error": message}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	if encodeErr := json.NewEncoder(w).Encode(errorResponse); encodeErr != nil {
-		logger.Printf("ERROR: Failed to encode error response: %v", encodeErr)
-	}
-}
 
-func respondWithJSON(w http.ResponseWriter, logger *log.Logger, code int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	if payload != nil {
-		if err := json.NewEncoder(w).Encode(payload); err != nil {
-			logger.Printf("ERROR: Failed to encode JSON response: %v", err)
-		}
-	}
-}
-
-// --- Helper Functions (Fiber versions) ---
-
-func RespondWithErrorFiber(c *fiber.Ctx, logger *log.Logger, message string, code int, err error) error {
-	if err != nil {
-		logger.Printf("ERROR: Fiber HTTP %d - %s: %v", code, message, err)
-	} else {
-		logger.Printf("WARN: Fiber HTTP %d - %s", code, message)
-	}
 	errorResponse := fiber.Map{"error": message}
 	return c.Status(code).JSON(errorResponse) // Return the error for Fiber chaining
 }
 
-func RespondWithJSONFiber(c *fiber.Ctx, logger *log.Logger, code int, payload interface{}) error {
+// RespondWithJSONFiber sends a JSON success response. Logging can be added here if needed.
+func RespondWithJSONFiber(c *fiber.Ctx, logger *slog.Logger, code int, payload interface{}) error {
+	// Optional: Log successful responses if desired (can be verbose)
+	// logger.Info("HTTP Response Success", "status_code", code, "path", c.Path())
+
 	if payload != nil {
 		return c.Status(code).JSON(payload) // Return the error for Fiber chaining
 	}
@@ -107,52 +84,96 @@ func RespondWithJSONFiber(c *fiber.Ctx, logger *log.Logger, code int, payload in
 	return c.SendStatus(code)
 }
 
-// --- Original Handlers (Using http.HandlerFunc) ---
+// --- Fiber Handlers (Updated for slog) ---
 
-// HandleCreateUser registers a new user
+// HandleCreateUser registers a new user (Fiber Handler using Adaptor)
+// NOTE: Since this still uses the adaptor for http.HandlerFunc,
+// we need to adapt the logging within the original http.HandlerFunc style,
+// or fully convert it to a Fiber handler. Let's keep it adapted for now
+// but use the injected slog logger.
 func (h *UserHandler) HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req dto.CreateUserRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		respondWithError(w, h.logger, "Invalid request body", http.StatusBadRequest, err)
+	// We don't have fiber context here, so logging path isn't easy
+	// Use a helper or log directly
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&req)
+	if err != nil {
+		h.logger.Warn("Invalid request body for user creation", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
 		return
 	}
 
 	newUser, err := h.userService.CreateUser(r.Context(), req.Name, req.Email, req.Password, req.Role, req.ShopID)
 	if err != nil {
+		status := http.StatusInternalServerError
+		message := "Failed to create user"
+		logLevel := slog.LevelError // Default to error
+
 		switch {
 		case errors.Is(err, app_service.ErrEmailExists):
-			respondWithError(w, h.logger, "Email already exists", http.StatusConflict, err)
+			status = http.StatusConflict
+			message = "Email already exists"
+			logLevel = slog.LevelWarn // Treat as client error for logging
 		case errors.Is(err, app_service.ErrInvalidInput):
-			respondWithError(w, h.logger, "Invalid input: "+err.Error(), http.StatusBadRequest, err)
-		default:
-			respondWithError(w, h.logger, "Failed to create user", http.StatusInternalServerError, err)
+			status = http.StatusBadRequest
+			message = "Invalid input: " + err.Error() // Include specific validation error
+			logLevel = slog.LevelWarn                 // Treat as client error for logging
 		}
+
+		h.logger.Log(r.Context(), logLevel, message, "email", req.Email, "error", err) // Use Log for dynamic level
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": message})
 		return
 	}
-	respondWithJSON(w, h.logger, http.StatusCreated, dto.ToUserResponse(newUser))
+
+	h.logger.Info("User created successfully via adapted handler", "user_id", newUser.ID, "email", newUser.Email)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(dto.ToUserResponse(newUser))
 }
 
-// HandleLogin processes user login and returns a JWT token
+// HandleLogin processes user login (Fiber Handler using Adaptor)
+// Similar logging adaptation needed as HandleCreateUser
 func (h *UserHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	var req dto.LoginRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		respondWithError(w, h.logger, "Invalid request body", http.StatusBadRequest, err)
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&req)
+	if err != nil {
+		h.logger.Warn("Invalid request body for login", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
 		return
 	}
 
 	authenticatedUser, err := h.userService.AuthenticateUser(r.Context(), req.Email, req.Password)
 	if err != nil {
+		status := http.StatusInternalServerError
+		message := "Login failed"
+		logLevel := slog.LevelError
+
 		if errors.Is(err, app_service.ErrAuthentication) {
-			respondWithError(w, h.logger, "Invalid email or password", http.StatusUnauthorized, err)
-		} else {
-			respondWithError(w, h.logger, "Login failed", http.StatusInternalServerError, err)
+			status = http.StatusUnauthorized
+			message = "Invalid email or password"
+			logLevel = slog.LevelWarn // Log failed auth attempts as Warn
 		}
+
+		h.logger.Log(r.Context(), logLevel, message, "email", req.Email, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": message})
 		return
 	}
 
 	tokenString, err := h.jwtService.GenerateToken(authenticatedUser.ID, authenticatedUser.Role)
 	if err != nil {
-		respondWithError(w, h.logger, "Failed to generate authentication token", http.StatusInternalServerError, err)
+		h.logger.Error("Failed to generate authentication token", "user_id", authenticatedUser.ID, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate authentication token"})
 		return
 	}
 
@@ -161,92 +182,89 @@ func (h *UserHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Token: tokenString,
 	}
 
-	respondWithJSON(w, h.logger, http.StatusOK, response)
+	h.logger.Info("User logged in successfully via adapted handler", "user_id", authenticatedUser.ID, "email", authenticatedUser.Email)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
-// HandleGetUserByID gets the user ID from context and fetches the user.
-func (h *UserHandler) HandleGetUserByID(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleGetUserByID [Fiber] - Handler entered.")
+// HandleGetUserByID gets the user ID from context and fetches the user (Direct Fiber Handler)
+func (h *UserHandler) HandleGetUserByID(c *fiber.Ctx) error {
+	h.logger.Debug("HandleGetUserByID [Fiber] - Handler entered.")
 
-	// --- Get Target User ID from Fiber Context (Locals) ---
 	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
 	if targetUserIDVal == nil {
-		h.logger.Println("ERROR: HandleGetUserByID [Fiber] - TargetUserID value from Locals is nil")
+		// Error already logged by middleware potentially, but log here too for clarity
+		h.logger.Error("HandleGetUserByID [Fiber] - TargetUserID value from Locals is nil")
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
 	}
 	targetUserID, ok := targetUserIDVal.(uint)
 	if !ok {
-		h.logger.Printf("ERROR: HandleGetUserByID [Fiber] - Failed to assert TargetUserID from Locals. Type was %T", targetUserIDVal)
+		h.logger.Error("HandleGetUserByID [Fiber] - Failed to assert TargetUserID from Locals", "type", fmt.Sprintf("%T", targetUserIDVal))
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
 	}
-	h.logger.Printf("DEBUG: HandleGetUserByID [Fiber] - Successfully retrieved TargetUserID: %d from Locals", targetUserID)
-	// --- End Get Target User ID ---
+	h.logger.Debug("HandleGetUserByID [Fiber] - Retrieved TargetUserID from Locals", "target_user_id", targetUserID)
 
-	// --- Get Authenticated User Claims (Optional - for authorization if needed) ---
-	// claimsVal := c.Locals(string(ContextKeyAuthClaims))
-	// claims, _ := claimsVal.(*security.Claims)
-	// if claims == nil { ... handle error ... }
-	// --- End Get Authenticated User Claims ---
-
-	// Authorization Check (Example: User can only get their own details unless Admin)
-	// if claims.UserID != targetUserID && claims.Role != user.RoleAdmin {
+	// Authorization Check (Example)
+	// claims := c.Locals(string(ContextKeyAuthClaims)).(*security.Claims) // Add nil check
+	// if claims != nil && claims.UserID != targetUserID && claims.Role != user.RoleAdmin {
 	//     return RespondWithErrorFiber(c, h.logger, "Forbidden", fiber.StatusForbidden, errors.New("insufficient permissions"))
 	// }
 
 	foundUser, err := h.userService.GetUserByID(c.UserContext(), targetUserID)
 	if err != nil {
-		switch {
-		case errors.Is(err, app_service.ErrUserNotFound):
+		if errors.Is(err, app_service.ErrUserNotFound) {
+			// Logged as Info in service, use Warn here for the failed request
 			return RespondWithErrorFiber(c, h.logger, "User not found", fiber.StatusNotFound, err)
-		default:
-			return RespondWithErrorFiber(c, h.logger, "Failed to retrieve user", fiber.StatusInternalServerError, err)
 		}
+		// Logged as Error in service, use Error here too
+		return RespondWithErrorFiber(c, h.logger, "Failed to retrieve user", fiber.StatusInternalServerError, err)
 	}
+	h.logger.Info("User retrieved successfully", "target_user_id", targetUserID)
 	return RespondWithJSONFiber(c, h.logger, fiber.StatusOK, dto.ToUserResponse(foundUser))
 }
 
-// HandleUpdateUserDetails updates user details.
-func (h *UserHandler) HandleUpdateUserDetails(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleUpdateUserDetails [Fiber] - Handler entered.")
+// HandleUpdateUserDetails updates user details (Direct Fiber Handler)
+func (h *UserHandler) HandleUpdateUserDetails(c *fiber.Ctx) error {
+	h.logger.Debug("HandleUpdateUserDetails [Fiber] - Handler entered.")
 
-	// --- Get Target User ID from Fiber Context (Locals) ---
+	// --- Get Target User ID ---
 	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
 	if targetUserIDVal == nil {
-		h.logger.Println("ERROR: HandleUpdateUserDetails [Fiber] - TargetUserID value from Locals is nil")
+		h.logger.Error("HandleUpdateUserDetails [Fiber] - TargetUserID value from Locals is nil")
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
 	}
 	targetUserID, ok := targetUserIDVal.(uint)
 	if !ok {
-		h.logger.Printf("ERROR: HandleUpdateUserDetails [Fiber] - Failed to assert TargetUserID from Locals. Type was %T", targetUserIDVal)
+		h.logger.Error("HandleUpdateUserDetails [Fiber] - Failed to assert TargetUserID from Locals", "type", fmt.Sprintf("%T", targetUserIDVal))
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
 	}
-	h.logger.Printf("DEBUG: HandleUpdateUserDetails [Fiber] - Successfully retrieved TargetUserID: %d from Locals", targetUserID)
-	// --- End Get Target User ID ---
+	h.logger.Debug("HandleUpdateUserDetails [Fiber] - Retrieved TargetUserID", "target_user_id", targetUserID)
 
-	// --- Get Authenticated User Claims from Fiber Context (Locals) ---
+	// --- Get Authenticated User Claims ---
 	claimsVal := c.Locals(string(ContextKeyAuthClaims))
 	if claimsVal == nil {
-		h.logger.Println("ERROR: HandleUpdateUserDetails [Fiber] - Claims value from Locals is nil")
+		h.logger.Error("HandleUpdateUserDetails [Fiber] - Claims value from Locals is nil")
 		return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
 	}
 	claims, ok := claimsVal.(*security.Claims)
 	if !ok {
-		h.logger.Printf("ERROR: HandleUpdateUserDetails [Fiber] - Failed to assert claims from Locals. Type was %T", claimsVal)
+		h.logger.Error("HandleUpdateUserDetails [Fiber] - Failed to assert claims from Locals", "type", fmt.Sprintf("%T", claimsVal))
 		return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
 	}
 	authUserID := claims.UserID
-	h.logger.Printf("DEBUG: HandleUpdateUserDetails [Fiber] - Successfully retrieved AuthUserID: %d from Locals", authUserID)
-	// --- End Get Authenticated User Claims ---
+	h.logger.Debug("HandleUpdateUserDetails [Fiber] - Retrieved AuthUserID", "auth_user_id", authUserID)
 
-	// Authorization Check (User can only update their own details unless Admin)
+	// --- Authorization Check ---
 	if authUserID != targetUserID /* && claims.Role != user.RoleAdmin */ {
+		h.logger.Warn("Authorization failed: User attempted to update another user's details", "auth_user_id", authUserID, "target_user_id", targetUserID)
 		return RespondWithErrorFiber(c, h.logger, "Forbidden: Cannot update another user's details", fiber.StatusForbidden, errors.New("user ID mismatch"))
 	}
 
-	// Decode Request Body
+	// --- Decode Request Body ---
 	var req dto.UpdateUserDetailsRequest
 	if err := c.BodyParser(&req); err != nil {
-		h.logger.Printf("ERROR: HandleUpdateUserDetails [Fiber] - Failed to parse request body: %v", err)
+		h.logger.Warn("Failed to parse request body for user update", "target_user_id", targetUserID, "error", err)
 		return RespondWithErrorFiber(c, h.logger, "Invalid request body", fiber.StatusBadRequest, err)
 	}
 
@@ -258,256 +276,314 @@ func (h *UserHandler) HandleUpdateUserDetails(c *fiber.Ctx) error { // Changed s
 		email = *req.Email
 	}
 
+	// --- Call Service ---
 	updatedUser, err := h.userService.UpdateUserDetails(c.UserContext(), targetUserID, name, email)
 	if err != nil {
 		switch {
 		case errors.Is(err, app_service.ErrUserNotFound):
-			return RespondWithErrorFiber(c, h.logger, "User not found", fiber.StatusNotFound, err)
+			return RespondWithErrorFiber(c, h.logger, "User not found", fiber.StatusNotFound, err) // Logged as Warn in service
 		case errors.Is(err, app_service.ErrEmailExists):
-			return RespondWithErrorFiber(c, h.logger, "Email already exists", fiber.StatusConflict, err)
+			return RespondWithErrorFiber(c, h.logger, "Email already exists", fiber.StatusConflict, err) // Logged as Warn in service
 		case errors.Is(err, app_service.ErrInvalidInput):
-			return RespondWithErrorFiber(c, h.logger, "Invalid input: "+err.Error(), fiber.StatusBadRequest, err)
+			return RespondWithErrorFiber(c, h.logger, "Invalid input: "+err.Error(), fiber.StatusBadRequest, err) // Logged as Warn in service
 		default:
-			return RespondWithErrorFiber(c, h.logger, "Failed to update user details", fiber.StatusInternalServerError, err)
+			return RespondWithErrorFiber(c, h.logger, "Failed to update user details", fiber.StatusInternalServerError, err) // Logged as Error in service
 		}
 	}
+
+	h.logger.Info("User details updated successfully", "target_user_id", targetUserID)
 	return RespondWithJSONFiber(c, h.logger, fiber.StatusOK, dto.ToUserResponse(updatedUser))
 }
 
-// HandleChangePassword changes the password for the authenticated user (Fiber Handler)
-func (h *UserHandler) HandleChangePassword(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleChangePassword [Fiber] - Handler entered.")
+// HandleChangePassword changes the password for the authenticated user (Direct Fiber Handler)
+func (h *UserHandler) HandleChangePassword(c *fiber.Ctx) error {
+	h.logger.Debug("HandleChangePassword [Fiber] - Handler entered.")
 
-	// --- Get Authenticated User Claims from Fiber Context (Locals) ---
-	claimsVal := c.Locals(string(ContextKeyAuthClaims)) // Use string key for Locals
-	if claimsVal == nil {
-		h.logger.Println("ERROR: HandleChangePassword [Fiber] - Claims value from Locals is nil")
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
-	}
+	// --- Get Claims & Target User ID (Combine checks for brevity) ---
+	claimsVal := c.Locals(string(ContextKeyAuthClaims))
+	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
 
-	claims, ok := claimsVal.(*security.Claims)
-	if !ok {
-		h.logger.Printf("ERROR: HandleChangePassword [Fiber] - Failed to assert claims from Locals. Type was %T", claimsVal)
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
-	}
-	authUserID := claims.UserID
-	h.logger.Printf("DEBUG: HandleChangePassword [Fiber] - Successfully retrieved AuthUserID: %d from Locals", authUserID)
-	// --- End Get Authenticated User Claims ---
-
-	// --- Get Target User ID from Fiber Context (Locals) ---
-	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID)) // Use string key for Locals
-	if targetUserIDVal == nil {
-		h.logger.Println("ERROR: HandleChangePassword [Fiber] - TargetUserID value from Locals is nil")
+	if claimsVal == nil || targetUserIDVal == nil {
+		h.logger.Error("HandleChangePassword [Fiber] - Missing claims or target user ID in Locals", "claims_nil", claimsVal == nil, "target_id_nil", targetUserIDVal == nil)
+		// Determine more specific error if possible
+		if claimsVal == nil {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
+		}
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
 	}
 
-	targetUserID, ok := targetUserIDVal.(uint)
-	if !ok {
-		h.logger.Printf("ERROR: HandleChangePassword [Fiber] - Failed to assert TargetUserID from Locals. Type was %T", targetUserIDVal)
+	claims, okClaims := claimsVal.(*security.Claims)
+	targetUserID, okTargetID := targetUserIDVal.(uint)
+
+	if !okClaims || !okTargetID {
+		h.logger.Error("HandleChangePassword [Fiber] - Invalid type for claims or target user ID in Locals", "claims_ok", okClaims, "target_id_ok", okTargetID, "claims_type", fmt.Sprintf("%T", claimsVal), "target_id_type", fmt.Sprintf("%T", targetUserIDVal))
+		// Determine more specific error if possible
+		if !okClaims {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
+		}
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
 	}
-	h.logger.Printf("DEBUG: HandleChangePassword [Fiber] - Successfully retrieved TargetUserID: %d from Locals", targetUserID)
-	// --- End Get Target User ID ---
 
-	h.logger.Printf("DEBUG: HandleChangePassword [Fiber] - AuthUserID: %d, TargetUserID: %d", authUserID, targetUserID)
+	authUserID := claims.UserID
+	h.logger.Debug("HandleChangePassword [Fiber] - Retrieved IDs", "auth_user_id", authUserID, "target_user_id", targetUserID)
 
-	// Authorization Check
-	if authUserID != targetUserID {
-		// Example: Allow Admins to change anyone's password
-		// if claims.Role != user.RoleAdmin {
+	// --- Authorization Check ---
+	if authUserID != targetUserID /* && claims.Role != user.RoleAdmin */ {
+		h.logger.Warn("Authorization failed: User attempted to change another user's password", "auth_user_id", authUserID, "target_user_id", targetUserID)
 		return RespondWithErrorFiber(c, h.logger, "Forbidden: Cannot change another user's password", fiber.StatusForbidden, errors.New("user ID mismatch"))
-		// }
 	}
 
-	// Decode Request Body using Fiber context
+	// --- Decode Request Body ---
 	var req dto.ChangePasswordRequest
-	if err := c.BodyParser(&req); err != nil { // Use c.BodyParser
-		h.logger.Printf("ERROR: HandleChangePassword [Fiber] - Failed to parse request body: %v", err)
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Warn("Failed to parse request body for password change", "target_user_id", targetUserID, "error", err)
 		return RespondWithErrorFiber(c, h.logger, "Invalid request body", fiber.StatusBadRequest, err)
 	}
 
-	// Call Service using the Target User ID and Fiber's Go context
+	// --- Call Service ---
 	err := h.userService.ChangePassword(c.UserContext(), targetUserID, req.OldPassword, req.NewPassword)
 	if err != nil {
-		// Map service errors to Fiber responses
 		switch {
 		case errors.Is(err, app_service.ErrUserNotFound):
-			// Should ideally not happen if middleware found the ID, but good practice
+			// Should not happen if middleware worked, but handle defensively
 			return RespondWithErrorFiber(c, h.logger, "User not found", fiber.StatusNotFound, err)
 		case errors.Is(err, app_service.ErrCurrentPassword):
-			return RespondWithErrorFiber(c, h.logger, "Incorrect current password", fiber.StatusBadRequest, err) // Use 400 Bad Request
+			// Log as Warn because it's a client input error
+			return RespondWithErrorFiber(c, h.logger, "Incorrect current password", fiber.StatusBadRequest, err)
 		case errors.Is(err, app_service.ErrInvalidInput):
+			// Log as Warn because it's a client input error
 			return RespondWithErrorFiber(c, h.logger, "Invalid input: "+err.Error(), fiber.StatusBadRequest, err)
 		default:
+			// Log as Error for unexpected service/repo errors
 			return RespondWithErrorFiber(c, h.logger, "Failed to change password", fiber.StatusInternalServerError, err)
 		}
 	}
 
-	// Use Fiber's way to send No Content
+	h.logger.Info("Password changed successfully", "target_user_id", targetUserID)
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// HandleActivateUser activates a user (Admin only).
-func (h *UserHandler) HandleActivateUser(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleActivateUser [Fiber] - Handler entered.")
+// HandleActivateUser activates a user (Admin only - Direct Fiber Handler)
+func (h *UserHandler) HandleActivateUser(c *fiber.Ctx) error {
+	h.logger.Debug("HandleActivateUser [Fiber] - Handler entered.")
 
-	// --- Get Authenticated User Claims from Fiber Context (Locals) ---
+	// --- Get Claims & Target User ID ---
 	claimsVal := c.Locals(string(ContextKeyAuthClaims))
-	if claimsVal == nil {
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
-	}
-	claims, ok := claimsVal.(*security.Claims)
-	if !ok {
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
-	}
-	h.logger.Printf("DEBUG: HandleActivateUser [Fiber] - Auth Role: %s", claims.Role.String())
-	// --- End Get Authenticated User Claims ---
+	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
 
-	// Authorization Check: Admin Only
+	if claimsVal == nil || targetUserIDVal == nil {
+		h.logger.Error("HandleActivateUser [Fiber] - Missing claims or target user ID in Locals", "claims_nil", claimsVal == nil, "target_id_nil", targetUserIDVal == nil)
+		// Prioritize auth error
+		if claimsVal == nil {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
+		}
+		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
+	}
+
+	claims, okClaims := claimsVal.(*security.Claims)
+	targetUserID, okTargetID := targetUserIDVal.(uint)
+
+	if !okClaims || !okTargetID {
+		h.logger.Error("HandleActivateUser [Fiber] - Invalid type for claims or target user ID in Locals", "claims_ok", okClaims, "target_id_ok", okTargetID, "claims_type", fmt.Sprintf("%T", claimsVal), "target_id_type", fmt.Sprintf("%T", targetUserIDVal))
+		if !okClaims {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
+		}
+		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
+	}
+	h.logger.Debug("HandleActivateUser [Fiber] - Retrieved IDs", "auth_user_id", claims.UserID, "auth_role", claims.Role.String(), "target_user_id", targetUserID)
+
+	// --- Authorization Check: Admin Only ---
 	if claims.Role != user.RoleAdmin {
+		h.logger.Warn("Authorization failed: Non-admin attempted to activate user", "auth_user_id", claims.UserID, "auth_role", claims.Role.String(), "target_user_id", targetUserID)
 		return RespondWithErrorFiber(c, h.logger, "Forbidden: Admin role required", fiber.StatusForbidden, errors.New("insufficient permissions"))
 	}
 
-	// --- Get Target User ID from Fiber Context (Locals) ---
-	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
-	if targetUserIDVal == nil {
-		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
-	}
-	targetUserID, ok := targetUserIDVal.(uint)
-	if !ok {
-		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
-	}
-	h.logger.Printf("DEBUG: HandleActivateUser [Fiber] - TargetUserID: %d", targetUserID)
-	// --- End Get Target User ID ---
-
+	// --- Call Service ---
 	err := h.userService.ActivateUser(c.UserContext(), targetUserID)
 	if err != nil {
 		switch {
 		case errors.Is(err, app_service.ErrUserNotFound):
-			return RespondWithErrorFiber(c, h.logger, "Target user not found", fiber.StatusNotFound, err)
+			return RespondWithErrorFiber(c, h.logger, "Target user not found", fiber.StatusNotFound, err) // Logged as Warn in service
 		default:
-			return RespondWithErrorFiber(c, h.logger, "Failed to activate user", fiber.StatusInternalServerError, err)
+			return RespondWithErrorFiber(c, h.logger, "Failed to activate user", fiber.StatusInternalServerError, err) // Logged as Error in service
 		}
 	}
+
+	h.logger.Info("User activated successfully", "target_user_id", targetUserID, "admin_user_id", claims.UserID)
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// HandleDeactivateUser deactivates a user (Admin only).
-func (h *UserHandler) HandleDeactivateUser(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleDeactivateUser [Fiber] - Handler entered.")
+// HandleDeactivateUser deactivates a user (Admin only - Direct Fiber Handler)
+func (h *UserHandler) HandleDeactivateUser(c *fiber.Ctx) error {
+	h.logger.Debug("HandleDeactivateUser [Fiber] - Handler entered.")
 
-	// --- Get Authenticated User Claims from Fiber Context (Locals) ---
+	// --- Get Claims & Target User ID --- (Similar checks as Activate)
 	claimsVal := c.Locals(string(ContextKeyAuthClaims))
-	if claimsVal == nil {
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
-	}
-	claims, ok := claimsVal.(*security.Claims)
-	if !ok {
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
-	}
-	h.logger.Printf("DEBUG: HandleDeactivateUser [Fiber] - Auth Role: %s", claims.Role.String())
-	// --- End Get Authenticated User Claims ---
+	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
 
-	// Authorization Check: Admin Only
+	if claimsVal == nil || targetUserIDVal == nil {
+		h.logger.Error("HandleDeactivateUser [Fiber] - Missing claims or target user ID in Locals", "claims_nil", claimsVal == nil, "target_id_nil", targetUserIDVal == nil)
+		if claimsVal == nil {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
+		}
+		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
+	}
+	claims, okClaims := claimsVal.(*security.Claims)
+	targetUserID, okTargetID := targetUserIDVal.(uint)
+	if !okClaims || !okTargetID {
+		h.logger.Error("HandleDeactivateUser [Fiber] - Invalid type for claims or target user ID in Locals", "claims_ok", okClaims, "target_id_ok", okTargetID, "claims_type", fmt.Sprintf("%T", claimsVal), "target_id_type", fmt.Sprintf("%T", targetUserIDVal))
+		if !okClaims {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
+		}
+		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
+	}
+	h.logger.Debug("HandleDeactivateUser [Fiber] - Retrieved IDs", "auth_user_id", claims.UserID, "auth_role", claims.Role.String(), "target_user_id", targetUserID)
+
+	// --- Authorization Check: Admin Only ---
 	if claims.Role != user.RoleAdmin {
+		h.logger.Warn("Authorization failed: Non-admin attempted to deactivate user", "auth_user_id", claims.UserID, "auth_role", claims.Role.String(), "target_user_id", targetUserID)
 		return RespondWithErrorFiber(c, h.logger, "Forbidden: Admin role required", fiber.StatusForbidden, errors.New("insufficient permissions"))
 	}
 
-	// --- Get Target User ID from Fiber Context (Locals) ---
-	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
-	if targetUserIDVal == nil {
-		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
-	}
-	targetUserID, ok := targetUserIDVal.(uint)
-	if !ok {
-		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
-	}
-	h.logger.Printf("DEBUG: HandleDeactivateUser [Fiber] - TargetUserID: %d", targetUserID)
-	// --- End Get Target User ID ---
-
+	// --- Call Service ---
 	err := h.userService.DeactivateUser(c.UserContext(), targetUserID)
 	if err != nil {
 		switch {
 		case errors.Is(err, app_service.ErrUserNotFound):
-			return RespondWithErrorFiber(c, h.logger, "Target user not found", fiber.StatusNotFound, err)
+			return RespondWithErrorFiber(c, h.logger, "Target user not found", fiber.StatusNotFound, err) // Logged as Warn in service
 		default:
-			return RespondWithErrorFiber(c, h.logger, "Failed to deactivate user", fiber.StatusInternalServerError, err)
+			return RespondWithErrorFiber(c, h.logger, "Failed to deactivate user", fiber.StatusInternalServerError, err) // Logged as Error in service
 		}
 	}
+
+	h.logger.Info("User deactivated successfully", "target_user_id", targetUserID, "admin_user_id", claims.UserID)
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// HandleDeleteUser deletes a user.
-func (h *UserHandler) HandleDeleteUser(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleDeleteUser [Fiber] - Handler entered.")
+// HandleDeleteUser deletes a user (Direct Fiber Handler)
+func (h *UserHandler) HandleDeleteUser(c *fiber.Ctx) error {
+	h.logger.Debug("HandleDeleteUser [Fiber] - Handler entered.")
 
-	// --- Get Target User ID from Fiber Context (Locals) ---
+	// --- Get Claims & Target User ID --- (Similar checks as Activate/Deactivate)
+	claimsVal := c.Locals(string(ContextKeyAuthClaims))
 	targetUserIDVal := c.Locals(string(ContextKeyTargetUserID))
-	if targetUserIDVal == nil {
+
+	if claimsVal == nil || targetUserIDVal == nil {
+		h.logger.Error("HandleDeleteUser [Fiber] - Missing claims or target user ID in Locals", "claims_nil", claimsVal == nil, "target_id_nil", targetUserIDVal == nil)
+		if claimsVal == nil {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
+		}
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (missing target user ID)", fiber.StatusInternalServerError, errors.New("target user ID not found in locals"))
 	}
-	targetUserID, ok := targetUserIDVal.(uint)
-	if !ok {
+	claims, okClaims := claimsVal.(*security.Claims)
+	targetUserID, okTargetID := targetUserIDVal.(uint)
+	if !okClaims || !okTargetID {
+		h.logger.Error("HandleDeleteUser [Fiber] - Invalid type for claims or target user ID in Locals", "claims_ok", okClaims, "target_id_ok", okTargetID, "claims_type", fmt.Sprintf("%T", claimsVal), "target_id_type", fmt.Sprintf("%T", targetUserIDVal))
+		if !okClaims {
+			return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
+		}
 		return RespondWithErrorFiber(c, h.logger, "Internal server error (invalid target user ID type)", fiber.StatusInternalServerError, errors.New("invalid target user ID type in locals"))
 	}
-	h.logger.Printf("DEBUG: HandleDeleteUser [Fiber] - TargetUserID: %d", targetUserID)
-	// --- End Get Target User ID ---
-
-	// --- Get Authenticated User Claims from Fiber Context (Locals) ---
-	claimsVal := c.Locals(string(ContextKeyAuthClaims))
-	if claimsVal == nil {
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
-	}
-	claims, ok := claimsVal.(*security.Claims)
-	if !ok {
-		return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
-	}
 	authUserID := claims.UserID
-	h.logger.Printf("DEBUG: HandleDeleteUser [Fiber] - AuthUserID: %d", authUserID)
-	// --- End Get Authenticated User Claims ---
+	h.logger.Debug("HandleDeleteUser [Fiber] - Retrieved IDs", "auth_user_id", authUserID, "auth_role", claims.Role.String(), "target_user_id", targetUserID)
 
-	// Authorization Check (User can delete self, Admin can delete anyone)
+	// --- Authorization Check (Self or Admin) ---
 	if authUserID != targetUserID && claims.Role != user.RoleAdmin {
+		h.logger.Warn("Authorization failed: User attempted to delete another user", "auth_user_id", authUserID, "auth_role", claims.Role.String(), "target_user_id", targetUserID)
 		return RespondWithErrorFiber(c, h.logger, "Forbidden: Cannot delete another user", fiber.StatusForbidden, errors.New("insufficient permissions"))
 	}
 
+	// --- Call Service ---
 	err := h.userService.DeleteUser(c.UserContext(), targetUserID)
 	if err != nil {
 		switch {
 		case errors.Is(err, app_service.ErrUserNotFound):
-			return RespondWithErrorFiber(c, h.logger, "User not found", fiber.StatusNotFound, err)
+			return RespondWithErrorFiber(c, h.logger, "User not found", fiber.StatusNotFound, err) // Logged as Warn in service
 		default:
-			return RespondWithErrorFiber(c, h.logger, "Failed to delete user", fiber.StatusInternalServerError, err)
+			return RespondWithErrorFiber(c, h.logger, "Failed to delete user", fiber.StatusInternalServerError, err) // Logged as Error in service
 		}
 	}
+
+	h.logger.Info("User deleted successfully", "target_user_id", targetUserID, "requesting_user_id", authUserID)
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// HandleListUsers lists all users (Admin only).
-func (h *UserHandler) HandleListUsers(c *fiber.Ctx) error { // Changed signature
-	h.logger.Println("DEBUG: HandleListUsers [Fiber] - Handler entered.")
+// HandleListUsers lists all users (Admin only - Direct Fiber Handler)
+func (h *UserHandler) HandleListUsers(c *fiber.Ctx) error {
+	h.logger.Debug("HandleListUsers [Fiber] - Handler entered.")
 
-	// --- Get Authenticated User Claims from Fiber Context (Locals) ---
+	// --- Get Claims ---
 	claimsVal := c.Locals(string(ContextKeyAuthClaims))
 	if claimsVal == nil {
+		h.logger.Error("HandleListUsers [Fiber] - Claims value from Locals is nil")
 		return RespondWithErrorFiber(c, h.logger, "Authentication failed (claims missing)", fiber.StatusUnauthorized, errors.New("auth claims not found in locals"))
 	}
 	claims, ok := claimsVal.(*security.Claims)
 	if !ok {
+		h.logger.Error("HandleListUsers [Fiber] - Failed to assert claims from Locals", "type", fmt.Sprintf("%T", claimsVal))
 		return RespondWithErrorFiber(c, h.logger, "Authentication failed (invalid claims type)", fiber.StatusUnauthorized, errors.New("invalid auth claims type in locals"))
 	}
-	h.logger.Printf("DEBUG: HandleListUsers [Fiber] - Auth Role: %s", claims.Role.String())
-	// --- End Get Authenticated User Claims ---
+	h.logger.Debug("HandleListUsers [Fiber] - Retrieved Claims", "auth_user_id", claims.UserID, "auth_role", claims.Role.String())
 
-	// Authorization Check: Admin Only
+	// --- Authorization Check: Admin Only ---
 	if claims.Role != user.RoleAdmin {
+		h.logger.Warn("Authorization failed: Non-admin attempted to list all users", "auth_user_id", claims.UserID, "auth_role", claims.Role.String())
 		return RespondWithErrorFiber(c, h.logger, "Forbidden: Admin role required", fiber.StatusForbidden, errors.New("insufficient permissions"))
 	}
 
-	// TODO: Add pagination parameters from query string (e.g., c.Query("limit"), c.Query("offset"))
+	// --- Call Service ---
+	// TODO: Add pagination from query params: c.QueryInt("limit", 20), c.QueryInt("offset", 0)
 	users, err := h.userService.ListAllUsers(c.UserContext() /*, pagination params */)
 	if err != nil {
+		// Logged as Error in service
 		return RespondWithErrorFiber(c, h.logger, "Failed to list users", fiber.StatusInternalServerError, err)
 	}
+
+	h.logger.Info("Listed all users successfully", "count", len(users), "admin_user_id", claims.UserID)
 	return RespondWithJSONFiber(c, h.logger, fiber.StatusOK, dto.ToUserResponseSlice(users))
 }
+
+// --- Deprecated http.HandlerFunc Helpers ---
+// Keep these only if you absolutely need to keep using the adaptor for some reason.
+// It's generally better to convert all handlers to Fiber handlers.
+
+// import "encoding/json" // Need this if using the helpers below
+
+// func decodeJSONBody(r *http.Request, v interface{}) error {
+// 	decoder := json.NewDecoder(r.Body)
+// 	err := decoder.Decode(v)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to decode request body: %w", err)
+// 	}
+// 	return nil
+// }
+
+// func respondWithError(w http.ResponseWriter, logger *slog.Logger, message string, code int, err error) {
+// 	logArgs := []any{"status_code", code, "message", message}
+// 	logLevel := slog.LevelWarn // Default to Warn for client errors
+// 	if err != nil {
+// 		logArgs = append(logArgs, "error", err)
+// 		if code >= 500 { // Treat server errors as Error level
+// 			logLevel = slog.LevelError
+// 		}
+// 	}
+// 	logger.Log(context.Background(), logLevel, "HTTP Response Error (adapted handler)", logArgs...) // No context readily available
+
+// 	errorResponse := map[string]string{"error": message}
+// 	w.Header().Set("Content-Type", "application/json")
+// 	w.WriteHeader(code)
+// 	if encodeErr := json.NewEncoder(w).Encode(errorResponse); encodeErr != nil {
+// 		logger.Error("Failed to encode error response (adapted handler)", "error", encodeErr)
+// 	}
+// }
+
+// func respondWithJSON(w http.ResponseWriter, logger *slog.Logger, code int, payload interface{}) {
+// 	// Optional: logger.Info("HTTP Response Success (adapted handler)", "status_code", code)
+// 	w.Header().Set("Content-Type", "application/json")
+// 	w.WriteHeader(code)
+// 	if payload != nil {
+// 		if err := json.NewEncoder(w).Encode(payload); err != nil {
+// 			logger.Error("Failed to encode JSON response (adapted handler)", "error", err)
+// 		}
+// 	}
+// }
