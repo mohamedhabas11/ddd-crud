@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DDD CRUD Login</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Login</h1>
+        <form id="loginForm">
+            <!-- Login form fields (no changes here) -->
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit">Login</button>
+        </form>
+        <div id="message"></div>
+
+        <!-- User Info Section (Logged In State) -->
+        <div id="userInfo" style="display: none; margin-top: 20px;">
+            <h2>Welcome!</h2>
+            <p>ID: <span id="userId"></span></p>
+            <p>Name: <span id="userName"></span></p>
+            <p>Email: <span id="userEmail"></span></p>
+            <p>Role: <span id="userRole"></span></p>
+
+            <!-- Button to show the change password form -->
+            <button id="showChangePasswordFormButton" style="margin-top: 15px; background-color: #ffc107; color: #333;">Change Password</button>
+
+            <!-- Change Password Form Section (Initially Hidden) -->
+            <div id="changePasswordSection" style="display: none; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                <h3>Change Your Password</h3>
+                <form id="changePasswordForm">
+                    <div class="form-group">
+                        <label for="oldPassword">Old Password:</label>
+                        <input type="password" id="oldPasswordInput" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">New Password:</label>
+                        <input type="password" id="newPasswordInput" required minlength="8">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmNewPassword">Confirm New Password:</label>
+                        <input type="password" id="confirmNewPasswordInput" required minlength="8">
+                    </div>
+                    <button type="submit">Update Password</button>
+                </form>
+                <div id="changePasswordMessage" style="margin-top: 15px;"></div>
+            </div>
+            <!-- End Change Password Section -->
+
+            <button id="logoutButton" style="margin-top: 20px;">Logout</button>
+        </div>
+        <!-- End User Info Section -->
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
